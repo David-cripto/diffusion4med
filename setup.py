@@ -9,7 +9,6 @@ with open('README.md', encoding='utf-8') as file:
 setup(
     name='diffusion4med',
     version='0.0.0',
-    description='vox2vec: Self-Superivsed Learning of Voxel-level Representations in Medical Images',
     long_description=long_description,
     long_description_content_type='text/markdown',
     url='https://github.com/David-cripto/diffusion4med',
