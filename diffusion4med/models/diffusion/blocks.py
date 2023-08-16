@@ -1,5 +1,5 @@
 from torch import Tensor, einsum
-from torch.nn import Conv3d
+from torch.nn import Conv3d, Conv2d
 from einops import reduce, rearrange
 import torch
 from torch import nn
@@ -27,13 +27,35 @@ class WeightStandardizedConv3d(Conv3d):
         )
 
 
+class WeightStandardizedConv2d(Conv2d):
+    def forward(self, image: Tensor) -> Tensor:
+        eps = 1e-5 if image.dtype == torch.float32 else 1e-3
+        mean = reduce(self.weight, "o ... -> o 1 1 1", "mean")
+        std = reduce(self.weight, "o ... -> o 1 1 1", torch.std)
+
+        normalized_weight = (self.weight - mean) / (std + eps)
+        return F.conv2d(
+            image,
+            normalized_weight,
+            self.bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.groups,
+        )
+
+
 class Block(nn.Module):
     def __init__(
-        self, in_channels: int, out_channels: int, num_groups: int = 8
+        self,
+        in_channels: int,
+        out_channels: int,
+        num_groups: int = 8,
+        conv_layer: nn.Module = WeightStandardizedConv3d,
     ) -> None:
         super().__init__()
         self.projection = nn.Sequential(
-            WeightStandardizedConv3d(in_channels, out_channels),
+            conv_layer(in_channels, out_channels),
             nn.GroupNorm(num_groups, out_channels),
         )
         self.act = nn.SiLU()
@@ -53,16 +75,23 @@ class ResBlock(nn.Module):
         in_channels: int,
         out_channels: int,
         num_groups: int = 8,
+        conv_layer: nn.Module = WeightStandardizedConv3d,
         time_emb_dim: int | None = None,
     ) -> None:
         super().__init__()
 
         self.wtime_block = Block(
-            in_channels=in_channels, out_channels=out_channels, num_groups=num_groups
+            in_channels=in_channels,
+            out_channels=out_channels,
+            num_groups=num_groups,
+            conv_layer=conv_layer,
         )
 
         self.wo_time_block = Block(
-            in_channels=out_channels, out_channels=out_channels, num_groups=num_groups
+            in_channels=out_channels,
+            out_channels=out_channels,
+            num_groups=num_groups,
+            conv_layer=conv_layer,
         )
 
         self.time_expansion = (
@@ -90,13 +119,18 @@ class ResBlock(nn.Module):
 
 
 class Downsample(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int) -> None:
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        conv_layer: nn.Module = WeightStandardizedConv3d,
+    ) -> None:
         super().__init__()
         self.func = nn.Sequential(
             Rearrange(
                 "b c (p1 h) (p2 w) (p3 d) -> b (c p1 p2 p3) h w d", p1=2, p2=2, p3=2
             ),
-            nn.Conv3d(8 * in_channels, out_channels),
+            conv_layer(8 * in_channels, out_channels),
         )
 
     def forward(self, image: Tensor):
@@ -104,11 +138,16 @@ class Downsample(nn.Module):
 
 
 class Upsample(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int) -> None:
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        conv_layer: nn.Module = WeightStandardizedConv3d,
+    ) -> None:
         super().__init__()
         self.func = nn.Sequential(
             nn.Upsample(scale_factor=2),
-            nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1),
+            conv_layer(in_channels, out_channels, kernel_size=3, padding=1),
         )
 
     def forward(self, image: Tensor):
@@ -117,16 +156,17 @@ class Upsample(nn.Module):
 
 class AbstractAttentnion(nn.Module, ABC):
     def __init__(
-        self, in_channels: int, num_heads: int = 4, dim_head: int = 32
+        self,
+        in_channels: int,
+        num_heads: int = 4,
+        dim_head: int = 32,
+        conv_layer: nn.Module = WeightStandardizedConv3d,
     ) -> None:
         super().__init__()
-        self.qkv = nn.Conv3d(in_channels, 3 * in_channels, kernel_size=1, bias=False)
+        self.qkv = conv_layer(in_channels, 3 * in_channels, kernel_size=1, bias=False)
         self.num_heads = num_heads
         self.scale = torch.sqrt(dim_head)
-        self.out_func = nn.Sequential(
-            nn.Conv3d(num_heads * dim_head, in_channels, 1),
-            nn.GroupNorm(1, in_channels),
-        )
+        self.out_func = conv_layer(num_heads * dim_head, in_channels, 1)
 
     @abstractmethod
     def forward(self, image: Tensor):
@@ -174,6 +214,8 @@ class LinearAttention(AbstractAttentnion):
         q = LinearAttention.smart_softmax(q, dim=-2)
         k = LinearAttention.smart_softmax(k, dim=-1)
 
+        q /= self.scale
+
         context = einsum("b h l i, b h m i -> b h l m", k, v)
         out = einsum("b h l n, b h l m -> b h n m", q, context)
 
@@ -189,9 +231,11 @@ class PreNorm(nn.Module):
     def forward(self, image: Tensor):
         return self.func(self.norm(image))
 
+
 class Residual(nn.Module):
     def __init__(self, func: tp.Callable) -> None:
         super().__init__()
         self.func = func
+
     def forward(self, image: Tensor):
         return image + self.func(image)
