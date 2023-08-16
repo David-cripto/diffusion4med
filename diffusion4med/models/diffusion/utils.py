@@ -1,6 +1,7 @@
 def exists(x):
     return x is not None
 
+
 def extract(arr, time, shape):
     batch_size = time.shape[0]
     out = arr.gather(-1, time)

@@ -95,33 +95,32 @@ class FPN(nn.Module):
         for block1, block2, attention, downsample in self.downpath:
             image = block1(image, time)
             skip_feature_maps.append(image)
-            
 
             image = block2(image, time)
             image = attention(image)
             skip_feature_maps.append(image)
 
             image = downsample(image)
-            
 
         image = self.midpath(image)
 
         feature_pyramid = [image]
 
         for upsmaple, block1, block2, attention in self.uppath:
-            image = upsmaple(image)            
+            image = upsmaple(image)
 
             image = torch.cat((image, skip_feature_maps.pop()), dim=1)
-            image = block1(image, time)            
+            image = block1(image, time)
 
             image = torch.cat((image, skip_feature_maps.pop()), dim=1)
             image = block2(image, time)
-            
+
             image = attention(image)
-            
+
             feature_pyramid.append(image)
 
         return feature_pyramid
+
 
 # 2D not implemented yet
 FPN3d = partial(

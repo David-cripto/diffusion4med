@@ -22,7 +22,9 @@ class WeightStandardizedConv3d(Conv3d):
 
         normalized_weight = (self.weight - mean) / (std + eps)
         if torch.norm(normalized_weight).detach() >= 1e5:
-            logging.warning(f"Something wrond with std in WeightStandardizedConv3d with size = {normalized_weight.size()}")
+            logging.warning(
+                f"Something wrond with std in WeightStandardizedConv3d with size = {normalized_weight.size()}"
+            )
         return F.conv3d(
             image,
             normalized_weight,
@@ -44,7 +46,9 @@ class WeightStandardizedConv2d(Conv2d):
 
         normalized_weight = (self.weight - mean) / (std + eps)
         if torch.norm(normalized_weight).detach() >= 1e5:
-            logging.warning(f"Something wrond with std in WeightStandardizedConv2d with size = {normalized_weight.size()}")
+            logging.warning(
+                f"Something wrond with std in WeightStandardizedConv2d with size = {normalized_weight.size()}"
+            )
         return F.conv2d(
             image,
             normalized_weight,
