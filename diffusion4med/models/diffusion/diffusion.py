@@ -1,10 +1,12 @@
 from thunder import ThunderModule
 import torch
+from torch import Tensor
 from diffusion4med.models.diffusion.utils import extract
+from diffusion4med.models.diffusion.schedulers import Scheduler
 
 
 class Diffusion(ThunderModule):
-    def __init__(self, timesteps, scheduler, *args, **kwargs) -> None:
+    def __init__(self, timesteps: int, scheduler: Scheduler, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self.timesteps = timesteps
@@ -23,13 +25,13 @@ class Diffusion(ThunderModule):
             "sqrt_one_minus_alphas_cumprod", sqrt_one_minus_alphas_cumprod
         )
 
-    def q_sample(self, image, time, noise):
+    def q_sample(self, image: Tensor, time: Tensor, noise: Tensor):
         return (
             extract(self.sqrt_alphas_cumprod * image, time, image.shape)
             + extract(self.sqrt_one_minus_alphas_cumprod, time, image.shape) * noise
         )
 
-    def training_step(self, batch, batch_index):
+    def training_step(self, batch: tuple[Tensor, ...], batch_index: int):
         time = torch.randint(0, self.timesteps, size=(batch.shape[0],))
         noise = torch.randn_like(batch)
         x_time = self.q_sample(batch, time, noise)
