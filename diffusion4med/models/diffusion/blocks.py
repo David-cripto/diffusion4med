@@ -181,7 +181,7 @@ class AbstractAttentnion(nn.Module, ABC):
         hidden_dim = num_heads * dim_head
         self.qkv = conv_layer(in_channels, 3 * hidden_dim, kernel_size=1, bias=False)
         self.num_heads = num_heads
-        self.scale = dim_head**0.5
+        self.scale = dim_head**-0.5
         self.out_func = conv_layer(hidden_dim, in_channels, kernel_size=1)
 
     @abstractmethod
@@ -214,7 +214,7 @@ class QuadraticAttention(AbstractAttentnion):
         q, k, v = self.get_qkv(image)
 
         attention = einsum("b h c i, b h c j -> b h i j", q, k)
-        attention /= self.scale
+        attention = attention * self.scale
         attention = QuadraticAttention.smart_softmax(attention, dim=-1)
         out = einsum("b h i j, b h c j -> b h i c", attention, v)
 
@@ -230,7 +230,7 @@ class LinearAttention(AbstractAttentnion):
         q = LinearAttention.smart_softmax(q, dim=-2)
         k = LinearAttention.smart_softmax(k, dim=-1)
 
-        q /= self.scale
+        q = q * self.scale
 
         context = einsum("b h l i, b h m i -> b h l m", k, v)
         out = einsum("b h l n, b h l m -> b h n m", q, context)

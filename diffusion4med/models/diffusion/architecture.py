@@ -122,9 +122,35 @@ class FPN(nn.Module):
         return feature_pyramid
 
 
+class HeadFPN(nn.Module):
+    def __init__(
+        self, in_channels: int, out_channels: int, conv_layer: nn.Module
+    ) -> None:
+        super().__init__()
+        self.func = conv_layer(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, images: list[Tensor]):
+        return self.func(images[-1])
+
+
+class UnionArchitecture(nn.Module):
+    def __init__(self, backbone: FPN, head: HeadFPN) -> None:
+        super().__init__()
+        self.backbone = backbone()
+        self.head = head()
+
+    def forward(self, image: Tensor, time: Tensor):
+        return self.head(self.backbone(image, time))
+
+
 # 2D not implemented yet
 FPN3d = partial(
     FPN,
     conv_layer=WeightStandardizedConv3d,
     time_2_embs_layer=LearnablePositionEmbeddings,
+)
+
+HeadFPN3d = partial(
+    HeadFPN,
+    conv_layer=WeightStandardizedConv3d,
 )

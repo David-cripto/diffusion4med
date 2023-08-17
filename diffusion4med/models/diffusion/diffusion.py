@@ -27,12 +27,12 @@ class Diffusion(ThunderModule):
 
     def q_sample(self, image: Tensor, time: Tensor, noise: Tensor):
         return (
-            extract(self.sqrt_alphas_cumprod * image, time, image.shape)
+            extract(self.sqrt_alphas_cumprod, time, image.shape) * image
             + extract(self.sqrt_one_minus_alphas_cumprod, time, image.shape) * noise
         )
 
-    def training_step(self, batch: tuple[Tensor, ...], batch_index: int):
-        time = torch.randint(0, self.timesteps, size=(batch.shape[0],))
+    def training_step(self, batch: Tensor, batch_index: int):
+        time = torch.randint(0, self.timesteps, size=(batch.shape[0],), device = self.device)
         noise = torch.randn_like(batch)
         x_time = self.q_sample(batch, time, noise)
         return self.criterion(self(x_time, time), noise)
