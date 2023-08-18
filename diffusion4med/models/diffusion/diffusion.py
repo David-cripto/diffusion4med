@@ -42,8 +42,23 @@ class Diffusion(ThunderModule):
         self.register_buffer(
             "inverse_sqrt_one_minus_alphas_cumprod", 1.0 / sqrt_one_minus_alphas_cumprod
         )
+        inverse_sqrt_alphas_cumprod = 1.0 / sqrt_alphas_cumprod
+        self.register_buffer("inverse_sqrt_alphas_cumprod", inverse_sqrt_alphas_cumprod)
+        self.register_buffer(
+            "sqrt_inverse_alphas_cumprod_m1",
+            inverse_sqrt_alphas_cumprod * sqrt_one_minus_alphas_cumprod,
+        )
 
         alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
+        self.register_buffer(
+            "posterior_coef_x0",
+            betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod),
+        )
+        self.register_buffer(
+            "posterior_coef_xt",
+            (1.0 - alphas_cumprod_prev) * torch.sqrt(alphas) / (1.0 - alphas_cumprod),
+        )
+
         variance = betas * (1 - alphas_cumprod_prev) / (1 - alphas_cumprod)
         self.register_buffer("variance", variance)
 
@@ -53,20 +68,24 @@ class Diffusion(ThunderModule):
             + extract(self.sqrt_one_minus_alphas_cumprod, time, image.shape) * noise
         )
 
-    @torch.no_grad()
-    def one_back_step(self, x_t: Tensor, time: Tensor):
-        inverse_sqrt_alpha_t = extract(self.inverse_sqrt_alphas, time, self.image_shape)
-        beta_t = extract(self.betas, time, self.image_shape)
-        inverse_sqrt_one_minus_alphas_cumprod_t = extract(
-            self.inverse_sqrt_one_minus_alphas_cumprod, time, self.image_shape
+    def get_x0_from_noise(self, x_t: Tensor, time: Tensor, noise: Tensor):
+        return (
+            extract(self.inverse_sqrt_alphas_cumprod, time, noise) * x_t
+            - extract(self.sqrt_inverse_alphas_cumprod_m1, time, noise) * noise
         )
 
-        x_mean = inverse_sqrt_alpha_t * (
-            x_t - beta_t * self(x_t, time) * inverse_sqrt_one_minus_alphas_cumprod_t
+    @torch.no_grad()
+    def one_back_step(self, x_t: Tensor, time: Tensor):
+        noise = self(x_t, time)
+        x_0 = self.get_x0_from_noise(x_t=x_t, time=time, noise=noise).clamp_(-1.0, 1.0)
+        x_t = (
+            extract(self.posterior_coef_x0, time, self.image_shape) * x_0
+            + extract(self.posterior_coef_xt, time, self.image_shape) * x_t
         )
+
         variance_t = extract(self.variance, time, self.image_shape)
         noise = torch.randn_like(x_t, device=self.device)
-        return x_mean + (1.0 - (time == 0).float()) * torch.sqrt(variance_t) * noise
+        return x_t + (1.0 - (time == 0).float()) * torch.sqrt(variance_t) * noise
 
     @torch.no_grad()
     def generation(self):
@@ -92,4 +111,5 @@ class Diffusion(ThunderModule):
         )
         noise = torch.randn_like(batch, device=self.device)
         x_time = self.q_sample(batch, time, noise)
-        return self.criterion(self(x_time, time), noise)
+        loss = self.criterion(self(x_time, time), noise)
+        return loss

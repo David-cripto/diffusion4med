@@ -1,5 +1,4 @@
-from torch import nn
-from torch import Tensor
+from torch import nn, Tensor
 import torch
 from diffusion4med.models.diffusion.blocks import (
     ResBlock,
@@ -13,6 +12,7 @@ from diffusion4med.models.diffusion.blocks import (
     WeightStandardizedConv3d,
     LearnablePositionEmbeddings,
 )
+from torch.nn import Conv3d
 from functools import partial
 
 
@@ -28,8 +28,6 @@ class FPN(nn.Module):
     ) -> None:
         super().__init__()
 
-        self.init_conv = conv_layer(in_channels, channels[0], kernel_size=1)
-
         time_emb_dim = channels[-1]
         self.time_2_embs = time_2_embs_layer(timesteps, time_emb_dim)
 
@@ -39,6 +37,9 @@ class FPN(nn.Module):
             conv_layer=conv_layer,
             time_emb_dim=time_emb_dim,
         )
+
+        self.init_conv = block(in_channels, channels[0])
+
         self.downpath = nn.ModuleList([])
         self.uppath = nn.ModuleList([])
 
@@ -50,11 +51,11 @@ class FPN(nn.Module):
                         block(in_channels, in_channels),
                         Residual(
                             PreNorm(
-                                LinearAttention(in_channels, conv_layer=conv_layer),
+                                LinearAttention(in_channels, conv_layer=Conv3d),
                                 in_channels,
                             )
                         ),
-                        Downsample(in_channels, out_channels, conv_layer=conv_layer),
+                        Downsample(in_channels, out_channels, conv_layer=Conv3d),
                     ]
                 )
             )
@@ -62,7 +63,7 @@ class FPN(nn.Module):
         mid_channels = channels[-1]
         self.midpath = nn.Sequential(
             block(mid_channels, mid_channels),
-            QuadraticAttention(mid_channels, conv_layer=conv_layer),
+            QuadraticAttention(mid_channels, conv_layer=Conv3d),
             block(mid_channels, mid_channels),
         )
 
@@ -73,12 +74,12 @@ class FPN(nn.Module):
             self.uppath.append(
                 nn.ModuleList(
                     [
-                        Upsample(in_channels, out_channels, conv_layer=conv_layer),
+                        Upsample(in_channels, out_channels, conv_layer=Conv3d),
                         block(2 * out_channels, out_channels),
                         block(2 * out_channels, out_channels),
                         Residual(
                             PreNorm(
-                                LinearAttention(out_channels, conv_layer=conv_layer),
+                                LinearAttention(out_channels, conv_layer=Conv3d),
                                 out_channels,
                             )
                         ),
@@ -144,13 +145,24 @@ class UnionArchitecture(nn.Module):
 
 
 # 2D not implemented yet
-FPN3d = partial(
+WeightStandardizedFPN3d = partial(
     FPN,
     conv_layer=WeightStandardizedConv3d,
     time_2_embs_layer=LearnablePositionEmbeddings,
 )
 
-HeadFPN3d = partial(
+WeightStandardizedHeadFPN3d = partial(
     HeadFPN,
     conv_layer=WeightStandardizedConv3d,
+)
+
+FPN3d = partial(
+    FPN,
+    conv_layer=Conv3d,
+    time_2_embs_layer=LearnablePositionEmbeddings,
+)
+
+HeadFPN3d = partial(
+    HeadFPN,
+    conv_layer=Conv3d,
 )

@@ -10,6 +10,7 @@ import typing as tp
 import math
 from diffusion4med.models.diffusion.utils import exists
 import logging
+from functools import partial
 
 
 class WeightStandardizedConv3d(Conv3d):
@@ -18,9 +19,9 @@ class WeightStandardizedConv3d(Conv3d):
             return super().forward(image)
         eps = 1e-5 if image.dtype == torch.float32 else 1e-3
         mean = reduce(self.weight, "o ... -> o 1 1 1 1", "mean")
-        std = reduce(self.weight, "o ... -> o 1 1 1 1", torch.std)
+        var = reduce(self.weight, "o ... -> o 1 1 1 1", partial(torch.var, unbiased=False))
 
-        normalized_weight = (self.weight - mean) / (std + eps)
+        normalized_weight = (self.weight - mean) * (var + eps).rsqrt()
         if torch.norm(normalized_weight).detach() >= 1e5:
             logging.warning(
                 f"Something wrond with std in WeightStandardizedConv3d with size = {normalized_weight.size()}"
