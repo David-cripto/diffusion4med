@@ -15,7 +15,9 @@ class Diffusion(ThunderModule):
         timesteps: int,
         scheduler: Scheduler,
         image_shape: tuple[int, ...],
-        log_image_step: int = 10,
+        num_log_images: int = 10,
+        log_time_step: int | None = None,
+        slice_visualize: int | None = None,
         *args,
         **kwargs
     ) -> None:
@@ -25,7 +27,9 @@ class Diffusion(ThunderModule):
         self.scheduler = scheduler(timesteps)
         # works only for 3D yet
         self.image_shape = image_shape if len(image_shape) == 5 else (1, *image_shape)
-        self.log_image_step = log_image_step
+        self.log_image_step = timesteps // num_log_images 
+        self.slice_visualize = slice_visualize if slice_visualize is not None else image_shape[-1] // 2
+        self.log_time_step = log_time_step
 
         self.register_schedule()
 
@@ -65,9 +69,6 @@ class Diffusion(ThunderModule):
         self.register_buffer("variance", variance)
 
     def q_sample(self, image: Tensor, time: Tensor, noise: Tensor):
-        print(f"IMAGE SIZE:{image.size()}")
-        print(f"IMAGE DEVICE:{image.device}")
-        print(f"CONSTANT:{self.sqrt_alphas_cumprod.device}")
         return (
             extract(self.sqrt_alphas_cumprod, time, image.shape) * image
             + extract(self.sqrt_one_minus_alphas_cumprod, time, image.shape) * noise
@@ -119,14 +120,29 @@ class Diffusion(ThunderModule):
         loss = self.criterion(self(x_t, time), noise)
         return loss
 
-    def validation_step(self, batch: Tensor, batch_idx: int, dataloader_idx: int = 0) -> STEP_OUTPUT:
-        time = torch.randint(
-            0, self.timesteps, size=(batch.shape[0],), device=self.device
-        )
+    def validation_step(
+        self, batch: Tensor, batch_idx: int, dataloader_idx: int = 0
+    ) -> STEP_OUTPUT:
+        batch = batch.to(self.device)
+        if self.log_time_step:
+            time = torch.full(
+                size=(batch.shape[0],),
+                fill_value=self.log_time_step,
+                device=self.device,
+            )
+        else:
+            time = torch.full(
+                size=(batch.shape[0],),
+                fill_value=self.timesteps // 2,
+                device=self.device,
+            )
         noise = torch.randn_like(batch, device=self.device)
         x_t = self.q_sample(batch, time, noise)
         predicted_noise = self(x_t, time)
-        loss = self.criterion(predicted_noise, noise)
-        # x_0 = self.get_x0_from_noise(x_t=x_t, time=time, noise=predicted_noise)
-        return loss
-    
+        x_0 = self.get_x0_from_noise(x_t=x_t, time=time, noise=predicted_noise)
+        self.logger.log_image(
+            "val/true_image | generated_image",
+            images=[batch[..., self.slice_visualize], x_0[..., self.slice_visualize]],
+            step=self.current_epoch,
+        )
+        return predicted_noise.cpu(), noise.cpu()

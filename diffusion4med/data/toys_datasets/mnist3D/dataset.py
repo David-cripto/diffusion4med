@@ -19,10 +19,15 @@ class Mnist3d(Dataset):
                 Lambda(lambda t: (t * 2) - 1),
             ]
         ),
+        train: bool = True
     ) -> None:
         super().__init__()
         x_train, x_test, y_train, y_test = get_train_test_mnist3D(path_to_data)
-        self.images = np.vstack([x_train, x_test])
+        if train:
+            self.images = np.vstack([x_train])
+        else:
+            self.images = np.vstack([x_test])
+            
         self.transform = transform
 
     def __len__(self):
