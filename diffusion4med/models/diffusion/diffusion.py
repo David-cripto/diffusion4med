@@ -1,3 +1,5 @@
+from typing import Tuple
+from lightning.pytorch.utilities.types import STEP_OUTPUT
 from thunder import ThunderModule
 import torch
 from torch import Tensor
@@ -63,6 +65,9 @@ class Diffusion(ThunderModule):
         self.register_buffer("variance", variance)
 
     def q_sample(self, image: Tensor, time: Tensor, noise: Tensor):
+        print(f"IMAGE SIZE:{image.size()}")
+        print(f"IMAGE DEVICE:{image.device}")
+        print(f"CONSTANT:{self.sqrt_alphas_cumprod.device}")
         return (
             extract(self.sqrt_alphas_cumprod, time, image.shape) * image
             + extract(self.sqrt_one_minus_alphas_cumprod, time, image.shape) * noise
@@ -72,12 +77,12 @@ class Diffusion(ThunderModule):
         return (
             extract(self.inverse_sqrt_alphas_cumprod, time, noise) * x_t
             - extract(self.sqrt_inverse_alphas_cumprod_m1, time, noise) * noise
-        )
+        ).clamp_(-1.0, 1.0)
 
     @torch.no_grad()
     def one_back_step(self, x_t: Tensor, time: Tensor):
         noise = self(x_t, time)
-        x_0 = self.get_x0_from_noise(x_t=x_t, time=time, noise=noise).clamp_(-1.0, 1.0)
+        x_0 = self.get_x0_from_noise(x_t=x_t, time=time, noise=noise)
         x_t = (
             extract(self.posterior_coef_x0, time, self.image_shape) * x_0
             + extract(self.posterior_coef_xt, time, self.image_shape) * x_t
@@ -110,6 +115,18 @@ class Diffusion(ThunderModule):
             0, self.timesteps, size=(batch.shape[0],), device=self.device
         )
         noise = torch.randn_like(batch, device=self.device)
-        x_time = self.q_sample(batch, time, noise)
-        loss = self.criterion(self(x_time, time), noise)
+        x_t = self.q_sample(batch, time, noise)
+        loss = self.criterion(self(x_t, time), noise)
         return loss
+
+    def validation_step(self, batch: Tensor, batch_idx: int, dataloader_idx: int = 0) -> STEP_OUTPUT:
+        time = torch.randint(
+            0, self.timesteps, size=(batch.shape[0],), device=self.device
+        )
+        noise = torch.randn_like(batch, device=self.device)
+        x_t = self.q_sample(batch, time, noise)
+        predicted_noise = self(x_t, time)
+        loss = self.criterion(predicted_noise, noise)
+        # x_0 = self.get_x0_from_noise(x_t=x_t, time=time, noise=predicted_noise)
+        return loss
+    
