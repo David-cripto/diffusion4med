@@ -8,7 +8,7 @@ from einops.layers.torch import Rearrange
 from abc import abstractmethod, ABC
 import typing as tp
 import math
-from diffusion4med.models.diffusion.utils import exists
+from diffusion4med.utils import exists
 import logging
 from functools import partial
 
@@ -18,14 +18,13 @@ class WeightStandardizedConv3d(Conv3d):
         if self.weight.size()[1:] == torch.Size([1, 1, 1, 1]):
             return super().forward(image)
         eps = 1e-5 if image.dtype == torch.float32 else 1e-3
-        mean = reduce(self.weight, "o ... -> o 1 1 1 1", "mean")
-        var = reduce(self.weight, "o ... -> o 1 1 1 1", partial(torch.var, unbiased=False))
+        
+        weight = self.weight
+        mean = reduce(weight, "o ... -> o 1 1 1 1", "mean")
+        var = reduce(weight, "o ... -> o 1 1 1 1", partial(torch.var, unbiased=False))
 
-        normalized_weight = (self.weight - mean) * (var + eps).rsqrt()
-        if torch.norm(normalized_weight).detach() >= 1e5:
-            logging.warning(
-                f"Something wrond with std in WeightStandardizedConv3d with size = {normalized_weight.size()}"
-            )
+        normalized_weight = (weight - mean) * (var + eps).rsqrt()
+        
         return F.conv3d(
             image,
             normalized_weight,

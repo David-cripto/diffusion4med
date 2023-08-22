@@ -3,7 +3,7 @@ from lightning.pytorch.utilities.types import STEP_OUTPUT
 from thunder import ThunderModule
 import torch
 from torch import Tensor
-from diffusion4med.models.diffusion.utils import extract
+from diffusion4med.utils import extract
 from diffusion4med.models.diffusion.schedulers import Scheduler
 from tqdm import tqdm
 import torch.nn.functional as F

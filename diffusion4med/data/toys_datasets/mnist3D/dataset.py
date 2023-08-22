@@ -1,6 +1,6 @@
 from torch.utils.data import Dataset
 from pathlib import Path
-from diffusion4med.data.toys_datasets.utils import get_train_test_mnist3D
+from diffusion4med.utils import get_train_test_mnist3D
 from torchvision.transforms import Compose, ToTensor, Lambda
 import numpy as np
 import torch
