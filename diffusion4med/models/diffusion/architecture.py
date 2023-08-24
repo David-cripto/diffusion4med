@@ -22,9 +22,10 @@ class FPN(nn.Module):
         in_channels: int,
         conv_layer: nn.Module,
         time_2_embs_layer: nn.Module,
-        channels: tuple = (1, 2, 4, 8),
+        channels: tuple[int, ...] = (1, 2, 4, 8),
         num_groups: int = 4,
         timesteps: int = 300,
+        num_blocks: tuple[int, ...] = ((2, 2), (2, 2), (2, 2)),
     ) -> None:
         super().__init__()
 
@@ -43,8 +44,10 @@ class FPN(nn.Module):
         self.downpath = nn.ModuleList([])
         self.uppath = nn.ModuleList([])
 
-        for in_channels, out_channels in zip(channels[:-1], channels[1:]):
-            self.downpath.append(
+        for num_idx, (in_channels, out_channels) in enumerate(
+            zip(channels[:-1], channels[1:])
+        ):
+            self.downpath.extend(
                 nn.ModuleList(
                     [
                         block(in_channels, in_channels),
@@ -55,26 +58,36 @@ class FPN(nn.Module):
                                 in_channels,
                             )
                         ),
-                        Downsample(in_channels, out_channels, conv_layer=Conv3d),
+                        Downsample(in_channels, out_channels, conv_layer=Conv3d)
+                        if block_idx == num_blocks[num_idx][0] - 1
+                        else nn.Identity(),
                     ]
                 )
+                for block_idx in range(num_blocks[num_idx][0])
             )
 
         mid_channels = channels[-1]
         self.midpath = nn.Sequential(
             block(mid_channels, mid_channels),
-            QuadraticAttention(mid_channels, conv_layer=Conv3d),
+            Residual(
+                PreNorm(
+                    QuadraticAttention(mid_channels, conv_layer=Conv3d),
+                    in_channels=mid_channels,
+                )
+            ),
             block(mid_channels, mid_channels),
         )
 
         reversed_channels = list(reversed(channels))
-        for in_channels, out_channels in zip(
-            reversed_channels[:-1], reversed_channels[1:]
+        for num_idx, (in_channels, out_channels) in enumerate(
+            zip(reversed_channels[:-1], reversed_channels[1:])
         ):
-            self.uppath.append(
+            self.uppath.extend(
                 nn.ModuleList(
                     [
-                        Upsample(in_channels, out_channels, conv_layer=Conv3d),
+                        Upsample(in_channels, out_channels, conv_layer=Conv3d)
+                        if block_idx == 0
+                        else nn.Identity(),
                         block(2 * out_channels, out_channels),
                         block(2 * out_channels, out_channels),
                         Residual(
@@ -85,6 +98,7 @@ class FPN(nn.Module):
                         ),
                     ]
                 )
+                for block_idx in range(num_blocks[len(num_blocks) - 1 - num_idx][1])
             )
 
     def forward(self, image: Tensor, time: Tensor):

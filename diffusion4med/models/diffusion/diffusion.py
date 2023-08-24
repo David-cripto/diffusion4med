@@ -27,8 +27,10 @@ class Diffusion(ThunderModule):
         self.scheduler = scheduler(timesteps)
         # works only for 3D yet
         self.image_shape = image_shape if len(image_shape) == 5 else (1, *image_shape)
-        self.log_image_step = timesteps // num_log_images 
-        self.slice_visualize = slice_visualize if slice_visualize is not None else image_shape[-1] // 2
+        self.log_image_step = timesteps // num_log_images
+        self.slice_visualize = (
+            slice_visualize if slice_visualize is not None else image_shape[-1] // 2
+        )
         self.log_time_step = log_time_step
 
         self.register_schedule()
@@ -141,8 +143,12 @@ class Diffusion(ThunderModule):
         predicted_noise = self(x_t, time)
         x_0 = self.get_x0_from_noise(x_t=x_t, time=time, noise=predicted_noise)
         self.logger.log_image(
-            "val/true_image | generated_image",
-            images=[batch[..., self.slice_visualize], x_0[..., self.slice_visualize]],
+            "val/true_image | x_t | generated_image",
+            images=[
+                batch[..., self.slice_visualize],
+                x_t[..., self.slice_visualize],
+                x_0[..., self.slice_visualize],
+            ],
             step=self.current_epoch,
         )
         return predicted_noise.cpu(), noise.cpu()
