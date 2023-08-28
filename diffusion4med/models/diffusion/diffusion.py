@@ -1,27 +1,31 @@
-from typing import Tuple
-from lightning.pytorch.utilities.types import STEP_OUTPUT
-from thunder import ThunderModule
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 from diffusion4med.utils import extract
 from diffusion4med.models.diffusion.schedulers import Scheduler
 from tqdm import tqdm
 import torch.nn.functional as F
+from lightning import LightningModule
+from  deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+from fairscale.nn.checkpoint import checkpoint_wrapper
+import deepspeed
 
 
-class Diffusion(ThunderModule):
+class Diffusion(LightningModule):
     def __init__(
         self,
         timesteps: int,
         scheduler: Scheduler,
         image_shape: tuple[int, ...],
+        backbone: nn.Module,
+        head: nn.Module,
+        criterion,
+        lr: float,
+        lr_scheduler=None,
         num_log_images: int = 10,
         log_time_step: int | None = None,
         slice_visualize: int | None = None,
-        *args,
-        **kwargs
     ) -> None:
-        super().__init__(*args, **kwargs)
+        super().__init__()
 
         self.timesteps = timesteps
         self.scheduler = scheduler(timesteps)
@@ -32,7 +36,11 @@ class Diffusion(ThunderModule):
             slice_visualize if slice_visualize is not None else image_shape[-1] // 2
         )
         self.log_time_step = log_time_step
-
+        self.criterion = criterion
+        self.backbone = backbone
+        self.head = head
+        self.lr = lr
+        self.lr_scheduler = lr_scheduler
         self.register_schedule()
 
     def register_schedule(self):
@@ -113,6 +121,17 @@ class Diffusion(ThunderModule):
                 log_images.append(image)
         return log_images
 
+    def forward(self, image: Tensor, time: Tensor):
+        # return self.head(deepspeed.checkpointing.checkpoint(self.backbone, image, time))
+        return self.head(self.backbone(image, time))
+    
+
+    def configure_optimizers(self):
+        optimizer = FusedAdam(self.parameters(), lr=self.lr)
+        if self.lr_scheduler:
+            return [optimizer], [self.lr_scheduler(optimizer)]
+        return optimizer
+
     def training_step(self, batch: Tensor, batch_index: int):
         time = torch.randint(
             0, self.timesteps, size=(batch.shape[0],), device=self.device
@@ -122,10 +141,7 @@ class Diffusion(ThunderModule):
         loss = self.criterion(self(x_t, time), noise)
         return loss
 
-    def validation_step(
-        self, batch: Tensor, batch_idx: int, dataloader_idx: int = 0
-    ) -> STEP_OUTPUT:
-        batch = batch.to(self.device)
+    def validation_step(self, batch: Tensor, batch_idx: int, dataloader_idx: int = 0):
         if self.log_time_step:
             time = torch.full(
                 size=(batch.shape[0],),

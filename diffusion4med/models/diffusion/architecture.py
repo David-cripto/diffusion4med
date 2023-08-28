@@ -14,6 +14,8 @@ from diffusion4med.models.diffusion.blocks import (
 )
 from torch.nn import Conv3d
 from functools import partial
+import deepspeed
+from fairscale.nn.checkpoint import checkpoint_wrapper
 
 
 class FPN(nn.Module):
@@ -119,10 +121,13 @@ class FPN(nn.Module):
 
         image = self.midpath(image)
 
-        feature_pyramid = [image]
+        feature_pyramid = []
 
-        for upsmaple, block1, block2, attention in self.uppath:
-            image = upsmaple(image)
+        for upsample, block1, block2, attention in self.uppath:
+            if isinstance(upsample, Upsample):
+                feature_pyramid.append(image)
+                
+            image = upsample(image)
 
             image = torch.cat((image, skip_feature_maps.pop()), dim=1)
             image = block1(image, time)
@@ -132,8 +137,7 @@ class FPN(nn.Module):
 
             image = attention(image)
 
-            feature_pyramid.append(image)
-
+        feature_pyramid.append(image)
         return feature_pyramid
 
 
@@ -146,16 +150,6 @@ class HeadFPN(nn.Module):
 
     def forward(self, images: list[Tensor]):
         return self.func(images[-1])
-
-
-class UnionArchitecture(nn.Module):
-    def __init__(self, backbone: FPN, head: HeadFPN) -> None:
-        super().__init__()
-        self.backbone = backbone()
-        self.head = head()
-
-    def forward(self, image: Tensor, time: Tensor):
-        return self.head(self.backbone(image, time))
 
 
 # 2D not implemented yet

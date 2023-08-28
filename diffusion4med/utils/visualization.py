@@ -20,7 +20,7 @@ def show(imgs: Tensor):
     return fig
 
 
-class ValVisulization(Callback):
+class ValVisualization(Callback):
     def on_validation_epoch_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
