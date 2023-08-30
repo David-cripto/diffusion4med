@@ -53,13 +53,6 @@ class FPN(nn.Module):
                 nn.ModuleList(
                     [
                         block(in_channels, in_channels),
-                        block(in_channels, in_channels),
-                        Residual(
-                            PreNorm(
-                                LinearAttention(in_channels, conv_layer=Conv3d),
-                                in_channels,
-                            )
-                        ),
                         Downsample(in_channels, out_channels, conv_layer=Conv3d)
                         if block_idx == num_blocks[num_idx][0] - 1
                         else nn.Identity(),
@@ -71,12 +64,6 @@ class FPN(nn.Module):
         mid_channels = channels[-1]
         self.midpath = nn.Sequential(
             block(mid_channels, mid_channels),
-            Residual(
-                PreNorm(
-                    QuadraticAttention(mid_channels, conv_layer=Conv3d),
-                    in_channels=mid_channels,
-                )
-            ),
             block(mid_channels, mid_channels),
         )
 
@@ -90,14 +77,9 @@ class FPN(nn.Module):
                         Upsample(in_channels, out_channels, conv_layer=Conv3d)
                         if block_idx == 0
                         else nn.Identity(),
-                        block(2 * out_channels, out_channels),
-                        block(2 * out_channels, out_channels),
-                        Residual(
-                            PreNorm(
-                                LinearAttention(out_channels, conv_layer=Conv3d),
-                                out_channels,
-                            )
-                        ),
+                        block(2 * out_channels, out_channels)
+                        if block_idx == 0
+                        else block(out_channels, out_channels)
                     ]
                 )
                 for block_idx in range(num_blocks[len(num_blocks) - 1 - num_idx][1])
@@ -109,13 +91,10 @@ class FPN(nn.Module):
         time = self.time_2_embs(time)
         skip_feature_maps = []
 
-        for block1, block2, attention, downsample in self.downpath:
-            image = block1(image, time)
-            skip_feature_maps.append(image)
-
-            image = block2(image, time)
-            image = attention(image)
-            skip_feature_maps.append(image)
+        for block, downsample in self.downpath:
+            image = block(image, time)
+            if isinstance(downsample, Downsample):
+                skip_feature_maps.append(image)
 
             image = downsample(image)
 
@@ -123,19 +102,15 @@ class FPN(nn.Module):
 
         feature_pyramid = []
 
-        for upsample, block1, block2, attention in self.uppath:
+        for upsample, block in self.uppath:
             if isinstance(upsample, Upsample):
                 feature_pyramid.append(image)
-                
+
             image = upsample(image)
+            if isinstance(upsample, Upsample):
+                image = torch.cat((image, skip_feature_maps.pop()), dim=1)
+            image = block(image, time)
 
-            image = torch.cat((image, skip_feature_maps.pop()), dim=1)
-            image = block1(image, time)
-
-            image = torch.cat((image, skip_feature_maps.pop()), dim=1)
-            image = block2(image, time)
-
-            image = attention(image)
 
         feature_pyramid.append(image)
         return feature_pyramid
