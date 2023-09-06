@@ -141,12 +141,7 @@ class Downsample(nn.Module):
         conv_layer: nn.Module = WeightStandardizedConv3d,
     ) -> None:
         super().__init__()
-        self.func = nn.Sequential(
-            Rearrange(
-                "b c (p1 h) (p2 w) (p3 d) -> b (c p1 p2 p3) h w d", p1=2, p2=2, p3=2
-            ),
-            conv_layer(8 * in_channels, out_channels, kernel_size=1),
-        )
+        self.func = conv_layer(in_channels, out_channels, kernel_size=2, stride=2)
 
     def forward(self, image: Tensor):
         return self.func(image)

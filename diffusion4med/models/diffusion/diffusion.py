@@ -127,7 +127,8 @@ class Diffusion(LightningModule):
     
 
     def configure_optimizers(self):
-        optimizer = FusedAdam(self.parameters(), lr=self.lr)
+        # optimizer = FusedAdam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         if self.lr_scheduler:
             return [optimizer], [self.lr_scheduler(optimizer)]
         return optimizer
