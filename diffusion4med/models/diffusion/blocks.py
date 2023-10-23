@@ -125,7 +125,7 @@ class ResBlock(nn.Module):
         if exists(time) and exists(self.time_expansion):
             expanded_time = self.time_expansion(time)
             expanded_time = rearrange(expanded_time, "b c -> b c 1 1 1")
-            time_scale_shift = expanded_time.chunk(2, dim=1)
+            time_scale_shift = torch.tensor_split(expanded_time, 2, dim=1)
 
         new_image = self.wtime_block(image, time_scale_shift)
         new_image = self.wo_time_block(new_image)

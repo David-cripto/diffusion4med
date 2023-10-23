@@ -28,6 +28,11 @@ class FPN(nn.Module):
         num_groups: int = 4,
         timesteps: int = 300,
         num_blocks: tuple[int, ...] = ((2, 2), (2, 2), (2, 2)),
+        attention_types: tuple[LinearAttention, ...] = (
+            (LinearAttention, LinearAttention),
+            (LinearAttention, LinearAttention),
+            (LinearAttention, LinearAttention),
+        ),
     ) -> None:
         super().__init__()
 
@@ -56,7 +61,9 @@ class FPN(nn.Module):
                         block(in_channels, in_channels),
                         Residual(
                             PreNorm(
-                                LinearAttention(in_channels, conv_layer=Conv3d),
+                                attention_types[num_idx][0](
+                                    in_channels, conv_layer=Conv3d
+                                ),
                                 in_channels,
                             )
                         ),
@@ -69,6 +76,7 @@ class FPN(nn.Module):
             )
 
         mid_channels = channels[-1]
+
         self.midpath = nn.Sequential(
             block(mid_channels, mid_channels),
             Residual(
@@ -78,8 +86,57 @@ class FPN(nn.Module):
                 )
             ),
             block(mid_channels, mid_channels),
+            Residual(
+                PreNorm(
+                    QuadraticAttention(mid_channels, conv_layer=Conv3d),
+                    in_channels=mid_channels,
+                )
+            ),
+            block(mid_channels, mid_channels),
+            Residual(
+                PreNorm(
+                    QuadraticAttention(mid_channels, conv_layer=Conv3d),
+                    in_channels=mid_channels,
+                )
+            ),
+            block(mid_channels, mid_channels),
+            Residual(
+                PreNorm(
+                    QuadraticAttention(mid_channels, conv_layer=Conv3d),
+                    in_channels=mid_channels,
+                )
+            ),
+            block(mid_channels, mid_channels),
+            Residual(
+                PreNorm(
+                    QuadraticAttention(mid_channels, conv_layer=Conv3d),
+                    in_channels=mid_channels,
+                )
+            ),
+            block(mid_channels, mid_channels),
+            Residual(
+                PreNorm(
+                    QuadraticAttention(mid_channels, conv_layer=Conv3d),
+                    in_channels=mid_channels,
+                )
+            ),
+            block(mid_channels, mid_channels),
+            Residual(
+                PreNorm(
+                    QuadraticAttention(mid_channels, conv_layer=Conv3d),
+                    in_channels=mid_channels,
+                )
+            ),
+            block(mid_channels, mid_channels),
+            Residual(
+                PreNorm(
+                    QuadraticAttention(mid_channels, conv_layer=Conv3d),
+                    in_channels=mid_channels,
+                )
+            ),
+            block(mid_channels, mid_channels)
         )
-
+        
         reversed_channels = list(reversed(channels))
         for num_idx, (in_channels, out_channels) in enumerate(
             zip(reversed_channels[:-1], reversed_channels[1:])
@@ -94,7 +151,9 @@ class FPN(nn.Module):
                         block(2 * out_channels, out_channels),
                         Residual(
                             PreNorm(
-                                LinearAttention(out_channels, conv_layer=Conv3d),
+                                attention_types[len(attention_types) - 1 - num_idx][1](
+                                    out_channels, conv_layer=Conv3d
+                                ),
                                 out_channels,
                             )
                         ),
@@ -126,9 +185,9 @@ class FPN(nn.Module):
         for upsample, block1, block2, attention in self.uppath:
             if isinstance(upsample, Upsample):
                 feature_pyramid.append(image)
-                
-            image = upsample(image)
 
+            image = upsample(image)
+            
             image = torch.cat((image, skip_feature_maps.pop()), dim=1)
             image = block1(image, time)
 

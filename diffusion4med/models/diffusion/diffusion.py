@@ -8,6 +8,7 @@ from lightning import LightningModule
 from  deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 from fairscale.nn.checkpoint import checkpoint_wrapper
 import deepspeed
+import typing as tp
 
 
 class Diffusion(LightningModule):
@@ -24,6 +25,7 @@ class Diffusion(LightningModule):
         num_log_images: int = 10,
         log_time_step: int | None = None,
         slice_visualize: int | None = None,
+        pre_time: tp.Sequence | None = None
     ) -> None:
         super().__init__()
 
@@ -41,6 +43,7 @@ class Diffusion(LightningModule):
         self.head = head
         self.lr = lr
         self.lr_scheduler = lr_scheduler
+        self.pre_time = pre_time
         self.register_schedule()
 
     def register_schedule(self):
@@ -86,8 +89,8 @@ class Diffusion(LightningModule):
 
     def get_x0_from_noise(self, x_t: Tensor, time: Tensor, noise: Tensor):
         return (
-            extract(self.inverse_sqrt_alphas_cumprod, time, noise) * x_t
-            - extract(self.sqrt_inverse_alphas_cumprod_m1, time, noise) * noise
+            extract(self.inverse_sqrt_alphas_cumprod, time, x_t.shape) * x_t
+            - extract(self.sqrt_inverse_alphas_cumprod_m1, time, x_t.shape) * noise
         ).clamp_(-1.0, 1.0)
 
     @torch.no_grad()
@@ -134,9 +137,14 @@ class Diffusion(LightningModule):
         return optimizer
 
     def training_step(self, batch: Tensor, batch_index: int):
-        time = torch.randint(
-            0, self.timesteps, size=(batch.shape[0],), device=self.device
-        )
+        if self.pre_time is None:
+            time = torch.randint(
+                0, self.timesteps, size=(batch.shape[0],), device=self.device
+            )
+        else:
+            num_probs = len(self.pre_time)
+            idx = torch.multinomial(torch.tensor([[1/num_probs]*num_probs]*batch.shape[0]), 1, replacement = True).ravel()
+            time = torch.tensor(self.pre_time, device = self.device)[idx]
         noise = torch.randn_like(batch, device=self.device)
         x_t = self.q_sample(batch, time, noise)
         loss = self.criterion(self(x_t, time), noise)

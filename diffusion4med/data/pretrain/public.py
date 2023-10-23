@@ -1,31 +1,25 @@
 # do actually need dependecies from vox2vec?
-from vox2vec.pretrain.data import Public
 from imops import crop_to_box
 from vox2vec.processing import scale_hu, sample_box
+import numpy as np
+import torch
+from vox2vec.pretrain.data.augmentations import sample_patch_size, sample_positive_pairs
+from vox2vec.pretrain.data.public import PublicPretrainDataset
 
-
-class ModifiedPublic(Public):
+class ModifiedPublic(PublicPretrainDataset):
     def __getitem__(self, i):
-        image, body_mask = self.load_example(self.ids[i])
+        image, spacing, body_mask = self.load_example(self.ids[i])
+        spacing = np.array(spacing, dtype='float32')
+                
+        patch_size = sample_patch_size(image.shape, spacing, self.spatial_augmentations)
+        positive_pairs = [
+            sample_positive_pairs(image, spacing, body_mask, patch_size, self.spatial_augmentations,
+                                  self.color_augmentations, self.masking, self.max_num_voxels_per_patch)
+            for _ in range(self.batch_size)
+        ]
+        patches_1, masks_1, voxels_1, patches_2, masks_2, voxels_2, orig_locs_mm, rois = zip(*positive_pairs)
+        patches_1 = torch.tensor(np.stack([p[None] for p in patches_1]))        
+        
+        patches_1 = patches_1 * 2 - 1
 
-        box = sample_box(image.shape, self.patch_size)
-        image, body_mask = crop_to_box(image, box), crop_to_box(body_mask, box)
-        # image_x, image_y, image_z = image.shape
-        # image = image[
-        #     image_x // 2
-        #     - self.patch_size[0] // 2 : image_x // 2
-        #     + self.patch_size[0] // 2,
-        #     image_y // 2
-        #     - self.patch_size[1] // 2 : image_y // 2
-        #     + self.patch_size[1] // 2,
-        #     image_z // 2
-        #     - self.patch_size[2] // 2 : image_z // 2
-        #     + self.patch_size[2] // 2,
-        # ]
-
-        image = scale_hu(image, self.window_hu)
-        image = image * 2 - 1
-
-        image = image[None]  # add channel dim
-
-        return image
+        return patches_1

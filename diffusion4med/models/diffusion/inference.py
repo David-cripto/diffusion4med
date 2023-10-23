@@ -1,15 +1,17 @@
 from torch import nn, Tensor
 import torch
-from vox2vec.eval.probing import Probing
+from vox2vec.eval.models.probing import MulticlassProbing
 from vox2vec.nn.functional import (
-    compute_binary_segmentation_loss,
+    compute_multiclass_segmentation_loss,
     eval_mode,
     compute_dice_score,
 )
-from vox2vec.eval.predict import predict
+from vox2vec.eval.models.predict import multiclass_predict
 from dpipe.torch import to_var
 from diffusion4med.models.diffusion import Diffusion
-
+from vox2vec.utils.misc import identity
+from vox2vec.eval.models.visualize import draw
+from monai.metrics import compute_hausdorff_distance 
 
 class Backbone(nn.Module):
     def __init__(
@@ -47,42 +49,78 @@ class Backbone(nn.Module):
         return list(reversed(embeddings))
 
 
-class ProbingModified(Probing):
+class ProbingModified(MulticlassProbing):
     def training_step(self, batch, batch_idx):
         optimizer = self.optimizers()
         optimizer.zero_grad()
 
         images, rois, gt_masks = batch
-        ### crutch
-        images = images * 2 - 1
-        ###
+        
+        images = images*2 - 1
+
         with torch.no_grad(), eval_mode(self.backbone):
             backbone_outputs = self.backbone(images)
 
         for i, head in enumerate(self.heads):
             pred_logits = head(backbone_outputs)
-            loss, logs = compute_binary_segmentation_loss(
-                pred_logits, gt_masks, rois, logs_prefix=f"train/head_{i}_"
-            )
+            loss, logs = compute_multiclass_segmentation_loss(pred_logits, gt_masks, rois,
+                                                              logs_prefix=f'train/head_{i}_')
             self.log_dict(logs)
             self.manual_backward(loss)
 
         optimizer.step()
 
-    def _val_test_step(self, image, roi, gt_mask, stage):
-        image = image * 2 - 1
+    def validation_step(self, batch, batch_idx):
+        image, roi, gt_mask = batch
+        
+        image = image*2 - 1
+        
+        
+        gt_mask = gt_mask[1:]  # drop background mask
         for i, head in enumerate(self.heads):
-            pred_probas = predict(
-                image, self.patch_size, self.backbone, head, self.device, roi
-            )
-            pred_mask = pred_probas >= self.threshold
-            dice_scores = compute_dice_score(pred_mask, gt_mask, reduce=lambda x: x)
+            pred_probas = multiclass_predict(image, self.patch_size, self.backbone, head,
+                                             self.device, roi, self.sw_batch_size)
+            argmax = pred_probas.argmax(dim=0)
+            pred_mask = torch.stack([argmax == i for i in range(1, pred_probas.shape[0])])
+
+            dice_scores = compute_dice_score(pred_mask, gt_mask, reduce=identity)
             for j, dice_score in enumerate(dice_scores):
-                self.log(
-                    f"{stage}/head_{i}_dice_score_for_cls_{j}",
-                    dice_score,
-                    on_epoch=True,
-                )
-            self.log(
-                f"{stage}/head_{i}_avg_dice_score", dice_scores.mean(), on_epoch=True
-            )
+                self.log(f'val/head_{i}_dice_score_for_cls_{j}', dice_score, on_epoch=True, sync_dist=True)
+            self.log(f'val/head_{i}_avg_dice_score', dice_scores.mean(), on_epoch=True, sync_dist=True)
+
+            if self.draw:
+                for dim in range(3):
+                    log_image = draw(image, gt_mask, pred_mask, dim)
+                    self.logger.log_image(
+                        f'val/image_{batch_idx}_dim_{dim}',
+                        log_image, self.trainer.current_epoch
+                    )
+
+    def test_step(self, batch, batch_idx):
+        image, roi, gt_mask, spacing = batch
+        
+        image = image*2 - 1
+        
+        gt_mask = gt_mask[1:]  # drop background mask
+        for i, head in enumerate(self.heads):
+            pred_probas = multiclass_predict(image, self.patch_size, self.backbone, head,
+                                             self.device, roi, self.sw_batch_size)
+            argmax = pred_probas.argmax(dim=0)
+            pred_mask = torch.stack([argmax == i for i in range(1, pred_probas.shape[0])])
+
+            dice_scores = compute_dice_score(pred_mask, gt_mask, reduce=identity)
+            hd_scores = compute_hausdorff_distance(
+                pred_mask.unsqueeze(0), gt_mask.unsqueeze(0), include_background=True, spacing=tuple(map(float, spacing))
+            ).squeeze(0)
+
+            for j in range(len(dice_scores)):
+                self.log(f'test/head_{i}_dice_score_for_cls_{j}', dice_scores[j], on_epoch=True)
+                self.log(f'test/head_{i}_hd_score_for_cls_{j}', hd_scores[j], on_epoch=True)
+            self.log(f'test/head_{i}_avg_dice_score', dice_scores.mean(), on_epoch=True)
+            self.log(f'test/head_{i}_avg_hd_score', hd_scores.mean(), on_epoch=True)
+
+            if self.draw:
+                for dim in range(3):
+                    for slc in range(0, image.shape[dim + 1], 10):
+                        log_image = draw(image, gt_mask, pred_mask, dim, slc)
+                        self.logger.log_image(f'test/image_{batch_idx}_dim_{dim}', log_image, slc)
